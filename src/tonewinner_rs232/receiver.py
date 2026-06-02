@@ -243,6 +243,17 @@ class TonewinnerReceiver:
         return parse_sound_mode(response)
 
     # ------------------------------------------------------------------
+    # General
+    # ------------------------------------------------------------------
+
+    async def send_command(self, command: str) -> None:
+        """Send a raw command string to the receiver.
+
+        The command is automatically wrapped in the ##...* protocol framing.
+        """
+        await self._send_command(command)
+
+    # ------------------------------------------------------------------
     # Internal: command sending
     # ------------------------------------------------------------------
 
