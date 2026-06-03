@@ -4,10 +4,28 @@ version = "1.0.0"
 description = "Async Python library for Tonewinner AV processors over RS232 serial"
 readme = "README.md"
 license = { text = "MIT" }
+authors = [
+  { name = "Emma Segal-Grossman", email = "hi@emma.cafe" },
+]
 requires-python = ">=3.12"
 dependencies = [
-    "serialx>=1.2.0",
+    "serialx[esphome]>=1.2.0",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Home Automation",
+    "Topic :: System :: Hardware",
+    "Framework :: AsyncIO",
+]
+
+[project.urls]
+Repository = "https://github.com/emma-sg/tonewinner-rs232"
 
 [project.optional-dependencies]
 dev = [
@@ -20,8 +38,8 @@ dev = [
 tonewinner-rs232 = "tonewinner_rs232.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.11.16"]
+build-backend = "uv_build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tonewinner_rs232"]
