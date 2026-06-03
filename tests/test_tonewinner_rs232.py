@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from tonewinner_rs232 import (
     TonewinnerReceiver,
     parse_input_source,
@@ -310,3 +312,52 @@ class TestReceiver:
         await receiver.send_command("CUSTOM CMD")
         written = mock_serial.get_written()
         assert any(b"##CUSTOM CMD*" in w for w in written)
+
+    async def test_query_timeout_cleans_up_pending(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Test that a timed-out query removes its pending entry."""
+        _real_wait_for = asyncio.wait_for
+
+        async def fast_wait_for(fut, timeout):
+            return await _real_wait_for(fut, timeout=0.01)
+
+        with (
+            patch(
+                "tonewinner_rs232.receiver.asyncio.wait_for", side_effect=fast_wait_for
+            ),
+            pytest.raises(
+                ConnectionError, match="No response for POWER query within timeout"
+            ),
+        ):
+            await receiver.query_power()
+
+        assert len(receiver._pending_queries) == 0  # noqa: SLF001
+
+    async def test_query_after_timeout_receives_response(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Test that a query after a timeout still receives its response."""
+        _real_wait_for = asyncio.wait_for
+
+        async def fast_wait_for(fut, timeout):
+            return await _real_wait_for(fut, timeout=0.01)
+
+        with patch(
+            "tonewinner_rs232.receiver.asyncio.wait_for", side_effect=fast_wait_for
+        ):
+            # First query times out, leaving no stale entry
+            with pytest.raises(ConnectionError):
+                await receiver.query_power()
+
+            # Second query should work normally
+            query_task = asyncio.create_task(receiver.query_power())
+            await asyncio.sleep(0)  # Let the task send the command
+            mock_serial.inject_response("POWER ON")
+            result = await query_task
+
+        assert result is True

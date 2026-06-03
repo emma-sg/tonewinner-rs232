@@ -323,13 +323,16 @@ class TonewinnerReceiver:
                     break
                 # Skip any number of consecutive # markers
                 content_start = start
-                while content_start < len(buffer) and buffer[content_start : content_start + 1] == b"#":
+                while (
+                    content_start < len(buffer)
+                    and buffer[content_start : content_start + 1] == b"#"
+                ):
                     content_start += 1
                 end = buffer.find(b"*", start)
                 if end == -1:
                     buffer = buffer[start:]
                     break
-                message_bytes = buffer[content_start : end]
+                message_bytes = buffer[content_start:end]
                 if message_bytes:
                     message = message_bytes.decode("ascii", errors="ignore")
                     self._process_message(message)
