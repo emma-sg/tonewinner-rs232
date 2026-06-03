@@ -75,7 +75,7 @@ class TonewinnerReceiver:
     @property
     def state(self) -> ReceiverState:
         """Current receiver state snapshot."""
-        return self._state
+        return self._state.copy()
 
     @property
     def connected(self) -> bool:
