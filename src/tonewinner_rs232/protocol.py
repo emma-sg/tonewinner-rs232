@@ -70,7 +70,10 @@ def parse_power_status(message: str) -> bool | None:
     """
     if not message or not message.startswith("POWER"):
         return None
-    return message[6:8] == "ON"
+    parts = message.split()
+    if len(parts) < 2:
+        return None
+    return parts[1] == "ON"
 
 
 def parse_volume_status(message: str) -> float | None:
@@ -80,9 +83,12 @@ def parse_volume_status(message: str) -> float | None:
     """
     if not message or not message.startswith("VOL"):
         return None
+    parts = message.split()
+    if len(parts) < 2:
+        return None
     try:
-        return float(message[4:8])
-    except (ValueError, IndexError):
+        return float(parts[1])
+    except ValueError:
         return None
 
 
@@ -93,7 +99,10 @@ def parse_mute_status(message: str) -> bool | None:
     """
     if not message or not message.startswith("MUTE"):
         return None
-    return message[5:7] == "ON"
+    parts = message.split()
+    if len(parts) < 2:
+        return None
+    return parts[1] == "ON"
 
 
 def parse_input_source(message: str) -> tuple[str, str, str | None, str | None] | None:
