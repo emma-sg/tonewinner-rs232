@@ -362,3 +362,36 @@ class TestReceiver:
             result = await query_task
 
         assert result is True
+
+    async def test_write_lock_serializes_concurrent_commands(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Test that concurrent commands are serialized by the write lock."""
+        gate = asyncio.Event()
+
+        async def gated_drain() -> None:
+            await gate.wait()
+
+        mock_serial.writer.drain = gated_drain
+
+        task1 = asyncio.create_task(receiver.power_on())
+        await asyncio.sleep(0)  # Let task1 acquire lock and block in drain
+
+        # Only the first command should have written so far
+        assert len(mock_serial.get_written()) == 1
+
+        task2 = asyncio.create_task(receiver.power_off())
+        await asyncio.sleep(0)  # Task2 should be waiting for the lock
+
+        # Still only one write since task2 is blocked on the lock
+        assert len(mock_serial.get_written()) == 1
+
+        gate.set()
+        await asyncio.gather(task1, task2)
+
+        # Both commands completed, each as an atomic write
+        written = mock_serial.get_written()
+        assert len(written) == 2
+        assert all(w.startswith(b"##") and w.endswith(b"*") for w in written)

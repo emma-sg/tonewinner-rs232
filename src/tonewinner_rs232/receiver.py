@@ -66,6 +66,7 @@ class TonewinnerReceiver:
         self._subscribers: list[StateCallback] = []
         self._pending_queries: list[PendingQuery] = []
         self._read_task: asyncio.Task[None] | None = None
+        self._write_lock = asyncio.Lock()
         self._batching = False
         self._batch_changed = False
 
@@ -273,9 +274,10 @@ class TonewinnerReceiver:
 
         data = build_command(command) if isinstance(command, str) else command
 
-        _LOGGER.debug("TX: %s", data.hex())
-        self._writer.write(data)
-        await self._writer.drain()
+        async with self._write_lock:
+            _LOGGER.debug("TX: %s", data.hex())
+            self._writer.write(data)
+            await self._writer.drain()
 
     async def _query(self, command: str, prefix: str) -> str:
         """Send a query and wait for the matching response."""
