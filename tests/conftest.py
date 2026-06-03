@@ -18,6 +18,7 @@ class MockSerialConnection:
         self.writer.write = MagicMock()
         self.writer.drain = AsyncMock()
         self.writer.close = MagicMock()
+        self.writer.wait_closed = AsyncMock()
 
     @property
     def reader(self) -> asyncio.StreamReader:

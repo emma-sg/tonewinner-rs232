@@ -114,6 +114,7 @@ class TonewinnerReceiver:
 
         if self._writer:
             self._writer.close()
+            await self._writer.wait_closed()
             self._reader = None
             self._writer = None
 
