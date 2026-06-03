@@ -46,6 +46,8 @@ async def _query(port: str, baudrate: int) -> None:
 
 def main() -> None:
     """CLI entry point."""
+    logging.basicConfig(level=logging.DEBUG)
+
     parser = argparse.ArgumentParser(description="Tonewinner RS232 CLI")
     parser.add_argument("port", help="Serial port path (e.g., /dev/ttyUSB0)")
     parser.add_argument(
