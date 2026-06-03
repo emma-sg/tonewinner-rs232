@@ -281,7 +281,8 @@ class TonewinnerReceiver:
         """Send a query and wait for the matching response."""
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
-        self._pending_queries.append(PendingQuery(prefix=prefix, future=future))
+        pending = PendingQuery(prefix=prefix, future=future)
+        self._pending_queries.append(pending)
         await self._send_command(command)
         try:
             return await asyncio.wait_for(future, timeout=3.0)
@@ -290,6 +291,9 @@ class TonewinnerReceiver:
             raise ConnectionError(
                 msg,
             ) from None
+        finally:
+            if pending in self._pending_queries:
+                self._pending_queries.remove(pending)
 
     # ------------------------------------------------------------------
     # Internal: read loop and message processing
