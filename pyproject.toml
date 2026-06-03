@@ -1,6 +1,6 @@
 [project]
 name = "tonewinner-rs232"
-version = "0.1.0"
+version = "1.0.0"
 description = "Async Python library for Tonewinner AV processors over RS232 serial"
 readme = "README.md"
 license = { text = "MIT" }
