@@ -96,10 +96,10 @@ def parse_mute_status(message: str) -> bool | None:
     return message[5:7] == "ON"
 
 
-def parse_input_source(message: str) -> tuple[str, str | None, str | None] | None:
+def parse_input_source(message: str) -> tuple[str, str, str | None, str | None] | None:
     """Parse input source from a device response message.
 
-    Returns (source_name, audio_source, video_source) or None.
+    Returns (source_code, source_name, audio_source, video_source) or None.
     """
     if not message or not message.startswith("SI"):
         return None
@@ -107,13 +107,16 @@ def parse_input_source(message: str) -> tuple[str, str | None, str | None] | Non
     # Format: "SI XX source_name V=video A=audio" or "SI source_code"
     rest = message[3:]
     if len(rest) > 3 and rest[:2].isdigit() and rest[2] == " ":
+        source_code = rest[:2]
         source = rest[3:]
     else:
+        source_code = rest.strip()
         source = rest
 
     match = re.search(r"(?P<name>.+) V=(?P<video>\w+) A=(?P<audio>\w+)$", source)
     if match:
         return (
+            source_code,
             match.group("name"),
             match.group("audio"),
             match.group("video"),
@@ -121,7 +124,7 @@ def parse_input_source(message: str) -> tuple[str, str | None, str | None] | Non
 
     source_stripped = source.strip()
     if source_stripped:
-        return source_stripped, None, None
+        return source_code, source_stripped, None, None
 
     return None
 

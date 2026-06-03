@@ -54,12 +54,12 @@ class TestProtocolParsing:
     def test_parse_input_source_with_av(self) -> None:
         """Test parsing an input source with V= and A= fields."""
         result = parse_input_source("SI 01 HDMI 1 V=HD1 A=HDMI")
-        assert result == ("HDMI 1", "HDMI", "HD1")
+        assert result == ("01", "HDMI 1", "HDMI", "HD1")
 
     def test_parse_input_source_simple(self) -> None:
         """Test parsing a simple input source without V=/A= fields."""
         result = parse_input_source("SI CO1")
-        assert result == ("CO1", None, None)
+        assert result == ("CO1", "CO1", None, None)
 
     def test_parse_input_source_not_source_message(self) -> None:
         """Test parsing a non-source message returns None."""
@@ -207,6 +207,7 @@ class TestReceiver:
         """Test that incoming source messages update state."""
         mock_serial.inject_response("SI 01 HDMI 1 V=HD1 A=HDMI")
         await asyncio.sleep(0.1)
+        assert receiver.state.source == "01"
         assert receiver.state.source_name == "HDMI 1"
         assert receiver.state.audio_source == "HDMI"
 

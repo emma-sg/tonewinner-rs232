@@ -226,10 +226,10 @@ class TonewinnerReceiver:
         """Select an input source by code (e.g. 'HD1', 'BT')."""
         await self._send_command(build_source_command(source_code))
 
-    async def query_source(self) -> tuple[str, str | None, str | None] | None:
+    async def query_source(self) -> tuple[str, str, str | None, str | None] | None:
         """Query and return the current input source.
 
-        Returns (source_name, audio_source, video_source) or None.
+        Returns (source_code, source_name, audio_source, video_source) or None.
         """
         response = await self._query(CMD_INPUT_QUERY, "SI")
         return parse_input_source(response)
@@ -373,7 +373,10 @@ class TonewinnerReceiver:
             changed = True
 
         if (source := parse_input_source(message)) is not None:
-            source_name, audio_source, video_source = source
+            source_code, source_name, audio_source, video_source = source
+            if self._state.source != source_code:
+                self._state.source = source_code
+                changed = True
             if self._state.source_name != source_name:
                 self._state.source_name = source_name
                 changed = True
