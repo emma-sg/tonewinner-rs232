@@ -2,6 +2,8 @@
 
 Async Python library to control Tonewinner AV processors over RS232 serial, built on [serialx](https://github.com/puddly/serialx).
 
+Supports the AT-500 specifically, other models should work but haven't been tested. Please open an issue if you encounter problems with other models.
+
 ## Installation
 
 ```
@@ -18,7 +20,11 @@ from tonewinner_rs232 import TonewinnerReceiver
 
 async def main():
     receiver = TonewinnerReceiver("/dev/ttyUSB0")
+
+    # Establish a connection
     await receiver.connect()
+
+    # Query the receiver's current state
     await receiver.query_state()
 
     print(f"Power: {receiver.state.power}")
@@ -41,6 +47,8 @@ asyncio.run(main())
 - Built-in CLI for testing
 
 ## CLI
+
+Just prints current state at the moment.
 
 ```bash
 python -m tonewinner_rs232 /dev/ttyUSB0
