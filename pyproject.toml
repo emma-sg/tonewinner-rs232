@@ -30,3 +30,8 @@ packages = ["src/tonewinner_rs232"]
 asyncio_mode = "auto"
 timeout = 5
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.15",
+]
