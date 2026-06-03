@@ -12,6 +12,7 @@ class MockSerialConnection:
     """Simulates a serialx open_serial_connection with a reader/writer pair."""
 
     def __init__(self) -> None:
+        """Initialize the mock serial connection."""
         self._reader: asyncio.StreamReader | None = None
         self.writer = MagicMock()
         self.writer.write = MagicMock()
@@ -20,6 +21,7 @@ class MockSerialConnection:
 
     @property
     def reader(self) -> asyncio.StreamReader:
+        """Return the mock stream reader, creating it lazily."""
         if self._reader is None:
             self._reader = asyncio.StreamReader()
         return self._reader

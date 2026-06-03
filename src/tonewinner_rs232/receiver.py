@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import contextlib
 import logging
+from collections.abc import Callable
 
 import serialx
 
@@ -50,6 +50,13 @@ class TonewinnerReceiver:
     """Async client for a Tonewinner AV processor over RS232 serial."""
 
     def __init__(self, port: str, baudrate: int = DEFAULT_BAUDRATE) -> None:
+        """Initialize the Tonewinner receiver client.
+
+        Args:
+            port: Serial port path (e.g., /dev/ttyUSB0).
+            baudrate: Baud rate for serial communication.
+
+        """
         self._port = port
         self._baudrate = baudrate
         self._reader: asyncio.StreamReader | None = None
@@ -261,12 +268,10 @@ class TonewinnerReceiver:
     async def _send_command(self, command: str | bytes) -> None:
         """Send a command to the receiver."""
         if not self._writer:
-            raise ConnectionError("Not connected")
+            msg = "Not connected"
+            raise ConnectionError(msg)
 
-        if isinstance(command, str):
-            data = build_command(command)
-        else:
-            data = command
+        data = build_command(command) if isinstance(command, str) else command
 
         _LOGGER.debug("TX: %s", data.hex())
         self._writer.write(data)
@@ -281,8 +286,9 @@ class TonewinnerReceiver:
         try:
             return await asyncio.wait_for(future, timeout=3.0)
         except TimeoutError:
+            msg = f"No response for {prefix} query within timeout"
             raise ConnectionError(
-                f"No response for {prefix} query within timeout"
+                msg,
             ) from None
 
     # ------------------------------------------------------------------
@@ -333,24 +339,27 @@ class TonewinnerReceiver:
         elif changed and self._batching:
             self._batch_changed = True
 
-    def _update_state(self, message: str) -> bool:
+    def _update_state(self, message: str) -> bool:  # noqa: C901
         """Update receiver state from a message. Returns True if anything changed."""
         changed = False
 
-        if (power := parse_power_status(message)) is not None:
-            if self._state.power != power:
-                self._state.power = power
-                changed = True
+        if (
+            power := parse_power_status(message)
+        ) is not None and self._state.power != power:
+            self._state.power = power
+            changed = True
 
-        if (volume := parse_volume_status(message)) is not None:
-            if self._state.volume != volume:
-                self._state.volume = volume
-                changed = True
+        if (
+            volume := parse_volume_status(message)
+        ) is not None and self._state.volume != volume:
+            self._state.volume = volume
+            changed = True
 
-        if (mute := parse_mute_status(message)) is not None:
-            if self._state.mute != mute:
-                self._state.mute = mute
-                changed = True
+        if (
+            mute := parse_mute_status(message)
+        ) is not None and self._state.mute != mute:
+            self._state.mute = mute
+            changed = True
 
         if (source := parse_input_source(message)) is not None:
             source_name, audio_source, video_source = source

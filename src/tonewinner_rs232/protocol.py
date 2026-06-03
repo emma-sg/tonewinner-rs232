@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .const import (
     COMMAND_START,
@@ -12,6 +13,8 @@ from .const import (
     SOUND_MODE_LABELS,
 )
 
+if TYPE_CHECKING:
+    import asyncio
 
 # Power commands
 CMD_POWER_ON = "POWER ON"
@@ -146,4 +149,4 @@ class PendingQuery:
     """An in-flight query awaiting a response from the receiver."""
 
     prefix: str
-    future: "asyncio.Future[str]" = field()
+    future: asyncio.Future[str] = field()

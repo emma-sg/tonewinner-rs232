@@ -8,9 +8,12 @@ Queries and prints the current receiver state.
 
 import argparse
 import asyncio
+import logging
 import sys
 
 from . import TonewinnerReceiver
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _query(port: str, baudrate: int) -> None:
@@ -19,11 +22,24 @@ async def _query(port: str, baudrate: int) -> None:
         await receiver.connect()
         await receiver.query_state()
         state = receiver.state
-        print(f"Power:    {'ON' if state.power else 'OFF' if state.power is not None else 'Unknown'}")
-        print(f"Volume:   {state.volume:.1f}" if state.volume is not None else "Volume:   Unknown")
-        print(f"Mute:     {'ON' if state.mute else 'OFF' if state.mute is not None else 'Unknown'}")
-        print(f"Source:   {state.source_name or 'Unknown'} (code: {state.source or '?'})")
-        print(f"Sound:    {state.sound_mode_label or 'Unknown'}")
+        _LOGGER.info(
+            "Power:    %s",
+            "ON" if state.power else "OFF" if state.power is not None else "Unknown",
+        )
+        _LOGGER.info(
+            "Volume:   %.1f",
+            state.volume,
+        )
+        _LOGGER.info(
+            "Mute:     %s",
+            "ON" if state.mute else "OFF" if state.mute is not None else "Unknown",
+        )
+        _LOGGER.info(
+            "Source:   %s (code: %s)",
+            state.source_name or "Unknown",
+            state.source or "?",
+        )
+        _LOGGER.info("Sound:    %s", state.sound_mode_label or "Unknown")
     finally:
         await receiver.disconnect()
 
@@ -39,8 +55,8 @@ def main() -> None:
 
     try:
         asyncio.run(_query(args.port, args.baudrate))
-    except ConnectionError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except ConnectionError:
+        _LOGGER.exception("Connection failed")
         sys.exit(1)
 
 
