@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import contextlib
 import logging
 
 import serialx
@@ -100,7 +101,7 @@ class TonewinnerReceiver:
         _LOGGER.debug("Disconnecting from %s", self._port)
         if self._read_task:
             self._read_task.cancel()
-            with asyncio.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
             self._read_task = None
 

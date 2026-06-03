@@ -101,7 +101,12 @@ def parse_input_source(message: str) -> tuple[str, str | None, str | None] | Non
     if not message or not message.startswith("SI"):
         return None
 
-    source = message[6:]
+    # Format: "SI XX source_name V=video A=audio" or "SI source_code"
+    rest = message[3:]
+    if len(rest) > 3 and rest[:2].isdigit() and rest[2] == " ":
+        source = rest[3:]
+    else:
+        source = rest
 
     match = re.search(r"(?P<name>.+) V=(?P<video>\w+) A=(?P<audio>\w+)$", source)
     if match:
