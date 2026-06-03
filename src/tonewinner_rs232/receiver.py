@@ -129,17 +129,15 @@ class TonewinnerReceiver:
         self._batching = True
         self._batch_changed = False
         try:
-            await self._send_command(CMD_POWER_QUERY)
-            await asyncio.sleep(0.3)
-            await self._send_command(CMD_VOLUME_QUERY)
-            await asyncio.sleep(0.3)
-            await self._send_command(CMD_MUTE_QUERY)
-            await asyncio.sleep(0.3)
-            await self._send_command(CMD_INPUT_QUERY)
-            await asyncio.sleep(0.3)
-            await self._send_command(CMD_MODE_QUERY)
-            # Give the receiver time to respond to the last command
-            await asyncio.sleep(0.3)
+            await self._query(CMD_POWER_QUERY, "POWER")
+            await asyncio.sleep(0.1)
+            await self._query(CMD_VOLUME_QUERY, "VOL")
+            await asyncio.sleep(0.1)
+            await self._query(CMD_MUTE_QUERY, "MUTE")
+            await asyncio.sleep(0.1)
+            await self._query(CMD_INPUT_QUERY, "SI")
+            await asyncio.sleep(0.1)
+            await self._query(CMD_MODE_QUERY, "MODE")
         finally:
             self._batching = False
             if self._batch_changed:
