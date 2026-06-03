@@ -27,6 +27,7 @@ from .protocol import (
     CMD_VOLUME_UP,
     PendingQuery,
     build_command,
+    build_mode_command,
     build_source_command,
     build_volume_command,
     parse_input_source,
@@ -239,7 +240,7 @@ class TonewinnerReceiver:
 
     async def select_sound_mode(self, mode_code: str) -> None:
         """Select a sound mode by code (e.g. 'STEREO', 'DIRECT')."""
-        await self._send_command(build_command(f"MODE {mode_code}"))
+        await self._send_command(build_mode_command(mode_code))
 
     async def query_sound_mode(self) -> tuple[str, str] | None:
         """Query and return the current sound mode.

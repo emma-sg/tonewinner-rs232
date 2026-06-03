@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from .const import (
     COMMAND_START,
     COMMAND_TERMINATOR,
-    INPUT_SOURCE_NAMES,
     SOUND_MODE_LABELS,
 )
 
@@ -149,11 +148,6 @@ def parse_sound_mode(message: str) -> tuple[str, str] | None:
     mode_code = message[5:]
     label = SOUND_MODE_LABELS.get(mode_code, f"Unknown ({mode_code})")
     return mode_code, label
-
-
-def resolve_source_name(source_code: str) -> str:
-    """Resolve a source code to its display name."""
-    return INPUT_SOURCE_NAMES.get(source_code, source_code)
 
 
 @dataclass
