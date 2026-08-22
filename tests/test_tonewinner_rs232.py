@@ -56,6 +56,16 @@ class TestProtocolParsing:
         result = parse_input_source("SI 01 HDMI 1 V=HD1 A=HDMI")
         assert result == ("01", "HDMI 1", "HDMI", "HD1")
 
+    def test_parse_input_source_space_after_v(self) -> None:
+        """Test parsing a response with a stray space after V= (firmware bug)."""
+        result = parse_input_source("SI 05 HDMI 5 V= HD5 A=HDMI")
+        assert result == ("05", "HDMI 5", "HDMI", "HD5")
+
+    def test_parse_input_source_space_after_a(self) -> None:
+        """Test parsing a response with a stray space after A= (firmware bug)."""
+        result = parse_input_source("SI 05 HDMI 5 V=HD5 A= HDMI")
+        assert result == ("05", "HDMI 5", "HDMI", "HD5")
+
     def test_parse_input_source_simple(self) -> None:
         """Test parsing a simple input source without V=/A= fields."""
         result = parse_input_source("SI CO1")
@@ -210,6 +220,19 @@ class TestReceiver:
         assert receiver.state.source == "01"
         assert receiver.state.source_name == "HDMI 1"
         assert receiver.state.audio_source == "HDMI"
+
+    async def test_source_state_update_firmware_bug(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Test that a response with a stray space after V= updates state."""
+        mock_serial.inject_response("SI 05 HDMI 5 V= HD5 A=HDMI")
+        await asyncio.sleep(0.1)
+        assert receiver.state.source == "05"
+        assert receiver.state.source_name == "HDMI 5"
+        assert receiver.state.audio_source == "HDMI"
+        assert receiver.state.video_source == "HD5"
 
     async def test_sound_mode_state_update(
         self,

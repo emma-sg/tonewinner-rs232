@@ -112,7 +112,9 @@ def parse_input_source(message: str) -> tuple[str, str, str | None, str | None] 
     if not message or not message.startswith("SI"):
         return None
 
-    # Format: "SI XX source_name V=video A=audio" or "SI source_code"
+    # Format: "SI XX source_name V=video A=audio" or "SI source_code".
+    # Some firmware versions emit a stray space after V=/A=, so whitespace
+    # around the values is tolerated.
     rest = message[3:]
     if len(rest) > 3 and rest[:2].isdigit() and rest[2] == " ":
         source_code = rest[:2]
@@ -121,11 +123,13 @@ def parse_input_source(message: str) -> tuple[str, str, str | None, str | None] 
         source_code = rest.strip()
         source = rest
 
-    match = re.search(r"(?P<name>.+) V=(?P<video>\w+) A=(?P<audio>\w+)$", source)
+    match = re.search(
+        r"(?P<name>.+) V=\s*(?P<video>\w+) A=\s*(?P<audio>\w+)\s*$", source
+    )
     if match:
         return (
             source_code,
-            match.group("name"),
+            match.group("name").strip(),
             match.group("audio"),
             match.group("video"),
         )
