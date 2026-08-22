@@ -1,5 +1,7 @@
 # tonewinner-rs232
 
+![PyPI Version](https://img.shields.io/pypi/v/tonewinner-rs232) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/emma-sg/tonewinner-rs232/test.yaml)
+
 Async Python library to control Tonewinner AV processors over RS232 serial, built on [serialx](https://github.com/puddly/serialx).
 
 Supports the AT-500 specifically, other models should work but haven't been tested. Please open an issue if you encounter problems with other models.
