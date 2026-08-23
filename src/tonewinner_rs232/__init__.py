@@ -5,6 +5,8 @@ from .const import (
     DEFAULT_READ_TIMEOUT,
     INPUT_SOURCE_NAMES,
     SOUND_MODE_LABELS,
+    SOURCE_QUERY_ATTEMPTS,
+    SOURCE_QUERY_RETRY_DELAY,
     InputSource,
     SoundMode,
 )
@@ -28,6 +30,8 @@ __all__ = [
     "DEFAULT_READ_TIMEOUT",
     "INPUT_SOURCE_NAMES",
     "SOUND_MODE_LABELS",
+    "SOURCE_QUERY_ATTEMPTS",
+    "SOURCE_QUERY_RETRY_DELAY",
     "InputSource",
     "ReceiverInfo",
     "ReceiverState",

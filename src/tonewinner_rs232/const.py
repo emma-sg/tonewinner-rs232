@@ -90,3 +90,8 @@ COMMAND_TERMINATOR = "*"
 # Default serial settings
 DEFAULT_BAUDRATE = 9600
 DEFAULT_READ_TIMEOUT = 1.0
+
+# The receiver ignores queries while booting; after a power-on with an
+# unknown input, re-query the source this many times at this interval.
+SOURCE_QUERY_ATTEMPTS = 5
+SOURCE_QUERY_RETRY_DELAY = 3.0

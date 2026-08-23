@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tonewinner_rs232 import (
+    SOURCE_QUERY_ATTEMPTS,
     ReceiverInfo,
     TonewinnerReceiver,
     parse_input_source,
@@ -374,6 +375,46 @@ class TestReceiver:
         assert receiver.connected is False
         assert mock_serial.writer.close.called
         assert states and states[-1] is None
+
+    async def test_source_requeried_after_power_on_unknown(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """Test a power-on with unknown source triggers bounded re-queries."""
+        query_source = AsyncMock(
+            side_effect=[ConnectionError("ignored")] * (SOURCE_QUERY_ATTEMPTS - 1)
+            + [MagicMock()]
+        )
+        with (
+            patch("tonewinner_rs232.receiver.SOURCE_QUERY_RETRY_DELAY", 0.0),
+            patch.object(receiver, "query_source", query_source),
+        ):
+            mock_serial.inject_response("POWER ON")
+            await asyncio.sleep(0.1)
+
+        assert query_source.await_count == SOURCE_QUERY_ATTEMPTS
+
+    async def test_source_not_requeried_when_known(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """Test no source re-query happens when the input is already known."""
+        mock_serial.inject_response("POWER ON")
+        mock_serial.inject_response("SI HD1 HDMI 1 HD1 HD1")
+        await asyncio.sleep(0.1)
+
+        assert not any(b"##SI ?" in w for w in mock_serial.get_written())
+
+    async def test_disconnect_cancels_source_query(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """Test disconnecting cancels a pending source re-query task."""
+        with patch("tonewinner_rs232.receiver.SOURCE_QUERY_RETRY_DELAY", 30.0):
+            mock_serial.inject_response("POWER ON")
+            await asyncio.sleep(0.1)
+            assert receiver._source_query_task is not None  # noqa: SLF001
+
+            await receiver.disconnect()
+            await asyncio.sleep(0.05)
+            assert receiver._source_query_task is None  # noqa: SLF001
 
     async def test_command_framing(
         self,
