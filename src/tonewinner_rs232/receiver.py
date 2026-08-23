@@ -12,6 +12,8 @@ import serialx
 from .const import (
     DEFAULT_BAUDRATE,
     DEFAULT_READ_TIMEOUT,
+    SOURCE_QUERY_ATTEMPTS,
+    SOURCE_QUERY_RETRY_DELAY,
 )
 from .protocol import (
     CMD_INFO_QUERY,
@@ -68,6 +70,7 @@ class TonewinnerReceiver:
         self._subscribers: list[StateCallback] = []
         self._pending_queries: list[PendingQuery] = []
         self._read_task: asyncio.Task[None] | None = None
+        self._source_query_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
         self._batching = False
         self._batch_changed = False
@@ -119,6 +122,12 @@ class TonewinnerReceiver:
                 await self._read_task
             self._read_task = None
 
+        if self._source_query_task:
+            self._source_query_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._source_query_task
+            self._source_query_task = None
+
         await self._close_transport()
         self._notify(None)
         _LOGGER.info("Disconnected from %s", self._port)
@@ -156,6 +165,7 @@ class TonewinnerReceiver:
             self._batching = False
             if self._batch_changed:
                 self._notify(self._state.copy())
+            self._maybe_start_source_query()
         return self._state
 
     # ------------------------------------------------------------------
@@ -380,6 +390,41 @@ class TonewinnerReceiver:
             self._notify(self._state.copy())
         elif changed and self._batching:
             self._batch_changed = True
+        if not self._batching:
+            self._maybe_start_source_query()
+
+    def _maybe_start_source_query(self) -> None:
+        """Re-query the source after a power-on that left it unknown.
+
+        The receiver ignores protocol queries while booting, so a single
+        query issued at power-on is often lost. Retry a bounded number of
+        times in the background; state updates reach subscribers through
+        the normal pipeline as soon as one succeeds.
+        """
+        if (
+            self._state.power
+            and self._state.source is None
+            and self._source_query_task is None
+        ):
+            self._source_query_task = asyncio.create_task(
+                self._query_source_until_known()
+            )
+
+    async def _query_source_until_known(self) -> None:
+        """Query the input source until known or attempts are exhausted."""
+        try:
+            for attempt in range(1, SOURCE_QUERY_ATTEMPTS + 1):
+                if not self.connected or not self._state.power:
+                    return
+                if self._state.source is not None:
+                    return
+                try:
+                    await self.query_source()
+                except ConnectionError as err:
+                    _LOGGER.debug("Source query attempt %d failed: %s", attempt, err)
+                await asyncio.sleep(SOURCE_QUERY_RETRY_DELAY)
+        finally:
+            self._source_query_task = None
 
     def _update_state(self, message: str) -> bool:  # noqa: C901
         """Update receiver state from a message. Returns True if anything changed."""
