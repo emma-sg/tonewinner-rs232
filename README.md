@@ -1,6 +1,6 @@
 # tonewinner-rs232
 
-![PyPI Version](https://img.shields.io/pypi/v/tonewinner-rs232) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/emma-sg/tonewinner-rs232/test.yaml)
+[![PyPI Version](https://img.shields.io/pypi/v/tonewinner-rs232)](https://pypi.org/project/tonewinner-rs232/) [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/emma-sg/tonewinner-rs232/test.yaml)](https://github.com/emma-sg/tonewinner-rs232/actions/workflows/test.yaml)
 
 Async Python library to control Tonewinner AV processors over RS232 serial, built on [serialx](https://github.com/puddly/serialx).
 
