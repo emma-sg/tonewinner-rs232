@@ -2,7 +2,7 @@
 
 import asyncio
 import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -337,6 +337,43 @@ class TestReceiver:
         await asyncio.sleep(0.1)
 
         assert len(states) == 0
+
+    async def test_read_error_releases_port_and_notifies(self, mock_serial) -> None:
+        """A serial read failure must release the port and notify subscribers."""
+        failing_reader = MagicMock()
+        failing_reader.read = AsyncMock(side_effect=OSError("port vanished"))
+
+        receiver = TonewinnerReceiver("/dev/mock")
+        open_conn = AsyncMock(return_value=(failing_reader, mock_serial.writer))
+        with patch("serialx.open_serial_connection", open_conn):
+            await receiver.connect()
+
+        states: list = []
+        receiver.subscribe(lambda s: states.append(s))
+
+        await asyncio.sleep(0.1)
+
+        assert receiver.connected is False
+        assert mock_serial.writer.close.called
+        assert states and states[-1] is None
+
+        # A later explicit disconnect is a no-op and does not re-notify.
+        await receiver.disconnect()
+        assert states.count(None) == 1
+
+    async def test_parse_crash_releases_port_and_notifies(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """An unexpected parser crash must still release the port."""
+        states: list = []
+        receiver.subscribe(lambda s: states.append(s))
+        with patch.object(receiver, "_update_state", side_effect=ValueError("boom")):
+            mock_serial.inject_response("POWER ON")
+            await asyncio.sleep(0.1)
+
+        assert receiver.connected is False
+        assert mock_serial.writer.close.called
+        assert states and states[-1] is None
 
     async def test_command_framing(
         self,

@@ -110,20 +110,29 @@ class TonewinnerReceiver:
             return
 
         _LOGGER.debug("Disconnecting from %s", self._port)
-        if self._read_task:
+
+        # Never await our own read task; when called from inside it, the task
+        # finishes itself via the read loop's exit cleanup.
+        if self._read_task and self._read_task is not asyncio.current_task():
             self._read_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
             self._read_task = None
 
-        if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._reader = None
-            self._writer = None
-
+        await self._close_transport()
         self._notify(None)
         _LOGGER.info("Disconnected from %s", self._port)
+
+    async def _close_transport(self) -> None:
+        """Close the serial transport, leaving the read task alone."""
+        if self._writer:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except OSError as err:
+                _LOGGER.debug("Error closing connection to %s: %s", self._port, err)
+            self._reader = None
+            self._writer = None
 
     # ------------------------------------------------------------------
     # State query
@@ -311,43 +320,56 @@ class TonewinnerReceiver:
     async def _read_loop(self) -> None:
         """Read and parse framed messages from the serial port."""
         buffer = b""
-        while self._reader:
-            try:
-                data = await self._reader.read(256)
-            except OSError:
-                _LOGGER.debug("Read error, connection lost")
-                break
-
-            if not data:
-                _LOGGER.debug("Empty read, connection closed")
-                break
-
-            _LOGGER.debug("RX: %s", data.hex())
-            buffer += data
-
-            while True:
-                start = buffer.find(b"#")
-                if start == -1:
-                    buffer = b""
+        try:
+            while self._reader:
+                try:
+                    data = await self._reader.read(256)
+                except OSError:
+                    _LOGGER.debug("Read error, connection lost")
                     break
-                # Skip any number of consecutive # markers
-                content_start = start
-                while (
-                    content_start < len(buffer)
-                    and buffer[content_start : content_start + 1] == b"#"
-                ):
-                    content_start += 1
-                end = buffer.find(b"*", start)
-                if end == -1:
-                    buffer = buffer[start:]
-                    break
-                message_bytes = buffer[content_start:end]
-                if message_bytes:
-                    message = message_bytes.decode("ascii", errors="ignore")
-                    self._process_message(message)
-                buffer = buffer[end + 1 :]
 
-        await self.disconnect()
+                if not data:
+                    _LOGGER.debug("Empty read, connection closed")
+                    break
+
+                _LOGGER.debug("RX: %s", data.hex())
+                buffer += data
+                buffer = self._process_buffer(buffer)
+        except asyncio.CancelledError:
+            # External disconnect() owns the teardown.
+            raise
+        except Exception:
+            _LOGGER.exception("Read loop crashed")
+
+        # Connection lost or loop finished: release the port and tell
+        # subscribers directly. Calling disconnect() here would await this
+        # very task.
+        self._read_task = None
+        await self._close_transport()
+        self._notify(None)
+        _LOGGER.warning("Connection to %s was lost", self._port)
+
+    def _process_buffer(self, buffer: bytes) -> bytes:
+        """Consume complete framed messages; return the unconsumed remainder."""
+        while True:
+            start = buffer.find(b"#")
+            if start == -1:
+                return b""
+            # Skip any number of consecutive # markers
+            content_start = start
+            while (
+                content_start < len(buffer)
+                and buffer[content_start : content_start + 1] == b"#"
+            ):
+                content_start += 1
+            end = buffer.find(b"*", start)
+            if end == -1:
+                return buffer[start:]
+            message_bytes = buffer[content_start:end]
+            if message_bytes:
+                message = message_bytes.decode("ascii", errors="ignore")
+                self._process_message(message)
+            buffer = buffer[end + 1 :]
 
     def _process_message(self, message: str) -> None:
         """Process a single framed message from the receiver."""
