@@ -1,16 +1,19 @@
 """Tests for tonewinner-rs232."""
 
 import asyncio
+import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tonewinner_rs232 import (
+    ReceiverInfo,
     TonewinnerReceiver,
     parse_input_source,
     parse_mute_status,
     parse_power_status,
     parse_sound_mode,
+    parse_version_info,
     parse_volume_status,
 )
 
@@ -88,6 +91,55 @@ class TestProtocolParsing:
     def test_parse_sound_mode_not_mode_message(self) -> None:
         """Test parsing a non-mode message returns None."""
         assert parse_sound_mode("POWER ON") is None
+
+    def test_parse_version_info(self) -> None:
+        """Test parsing a standard VER response."""
+        info = parse_version_info("VER :AT-500,V1.02.1777,Jul  1 2026")
+        assert info == ReceiverInfo(
+            model="AT-500",
+            firmware="V1.02.1777",
+            date=datetime.datetime(2026, 7, 1),
+        )
+
+    def test_parse_version_info_no_colon_space(self) -> None:
+        """Test parsing a VER response without the space after the colon."""
+        info = parse_version_info("VER:AT-500,V1.02.1777,Jul  1 2026")
+        assert info.model == "AT-500"
+        assert info.firmware == "V1.02.1777"
+
+    def test_parse_version_info_no_colon(self) -> None:
+        """Test parsing a VER response with no colon separator."""
+        info = parse_version_info("VER AT-500,V1.02.1777,Jul  1 2026")
+        assert info.model == "AT-500"
+
+    def test_parse_version_info_loose_whitespace(self) -> None:
+        """Test parsing a VER response with irregular whitespace."""
+        info = parse_version_info("VER : AT-500 , V1.02.1777 , Jul  1 2026")
+        assert info.model == "AT-500"
+        assert info.firmware == "V1.02.1777"
+
+    def test_parse_version_info_model_only(self) -> None:
+        """Test parsing a VER response with only a model field."""
+        info = parse_version_info("VER:AT-500")
+        assert info.model == "AT-500"
+        assert info.firmware is None
+        assert info.date is None
+
+    def test_parse_version_info_unparseable_date(self) -> None:
+        """Test that an unparseable date field becomes None."""
+        info = parse_version_info("VER:AT-500,V1.02.1777,some-garbage-date")
+        assert info.model == "AT-500"
+        assert info.firmware == "V1.02.1777"
+        assert info.date is None
+
+    def test_parse_version_info_not_version_message(self) -> None:
+        """Test parsing a non-VER message returns None."""
+        assert parse_version_info("POWER ON") is None
+
+    def test_parse_version_info_empty(self) -> None:
+        """Test parsing an empty VER response returns None."""
+        assert parse_version_info("VER") is None
+        assert parse_version_info("VER :") is None
 
 
 class TestReceiver:
@@ -336,6 +388,22 @@ class TestReceiver:
         await receiver.send_command("CUSTOM CMD")
         written = mock_serial.get_written()
         assert any(b"##CUSTOM CMD*" in w for w in written)
+
+    async def test_query_info(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Test query_info returns parsed device identity information."""
+        query_task = asyncio.create_task(receiver.query_info())
+        await asyncio.sleep(0)
+        mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+        info = await query_task
+
+        assert info is not None
+        assert info.model == "AT-500"
+        assert info.firmware == "V1.02.1777"
+        assert info.date == datetime.datetime(2026, 7, 1)
 
     async def test_query_timeout_cleans_up_pending(
         self,

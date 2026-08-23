@@ -14,6 +14,7 @@ from .const import (
     DEFAULT_READ_TIMEOUT,
 )
 from .protocol import (
+    CMD_INFO_QUERY,
     CMD_INPUT_QUERY,
     CMD_MODE_QUERY,
     CMD_MUTE_OFF,
@@ -34,9 +35,10 @@ from .protocol import (
     parse_mute_status,
     parse_power_status,
     parse_sound_mode,
+    parse_version_info,
     parse_volume_status,
 )
-from .state import ReceiverState
+from .state import ReceiverInfo, ReceiverState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -254,6 +256,11 @@ class TonewinnerReceiver:
     # ------------------------------------------------------------------
     # General
     # ------------------------------------------------------------------
+
+    async def query_info(self) -> ReceiverInfo | None:
+        """Query and return device identity information (model, firmware, date)."""
+        response = await self._query(CMD_INFO_QUERY, "VER")
+        return parse_version_info(response)
 
     async def send_command(self, command: str) -> None:
         """Send a raw command string to the receiver.

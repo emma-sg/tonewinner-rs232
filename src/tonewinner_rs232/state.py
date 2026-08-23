@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, replace
+
+
+@dataclass
+class ReceiverInfo:
+    """Device identity information reported by the VER command.
+
+    Fields are None when not present or unparseable in the response.
+    """
+
+    model: str | None = None
+    firmware: str | None = None
+    date: datetime.datetime | None = None
 
 
 @dataclass

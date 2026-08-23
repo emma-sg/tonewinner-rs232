@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ from .const import (
     COMMAND_TERMINATOR,
     SOUND_MODE_LABELS,
 )
+from .state import ReceiverInfo
 
 if TYPE_CHECKING:
     import asyncio
@@ -37,6 +39,9 @@ CMD_INPUT_QUERY = "SI ?"
 
 # Sound mode commands
 CMD_MODE_QUERY = "MODE ?"
+
+# Device info command
+CMD_INFO_QUERY = "VER"
 
 
 def build_command(command: str) -> bytes:
@@ -152,6 +157,42 @@ def parse_sound_mode(message: str) -> tuple[str, str] | None:
     mode_code = message[5:]
     label = SOUND_MODE_LABELS.get(mode_code, f"Unknown ({mode_code})")
     return mode_code, label
+
+
+def parse_version_info(message: str) -> ReceiverInfo | None:
+    """Parse a VER response into device identity information.
+
+    The response is ``VER :<model>,<firmware>,<date>``, though the colon and
+    surrounding whitespace vary between firmware versions. Each comma-
+    separated field is optional in practice, so missing fields become None.
+
+    Returns None if the message is not a VER response.
+    """
+    if not message or not message.startswith("VER"):
+        return None
+
+    # Strip the leading "VER" token and any following ":" separator, then
+    # split the remainder on commas.
+    rest = message[3:].lstrip()
+    rest = rest.lstrip(":").lstrip()
+    if not rest:
+        return None
+
+    fields = [field.strip() for field in rest.split(",")]
+    model = fields[0] or None
+    firmware = fields[1] if len(fields) > 1 else None
+
+    date: datetime.datetime | None = None
+    if len(fields) > 2 and (raw_date := fields[2]):
+        try:
+            date = datetime.datetime.strptime(raw_date, "%b %d %Y")
+        except ValueError:
+            date = None
+
+    if not model and not firmware and not date:
+        return None
+
+    return ReceiverInfo(model=model, firmware=firmware, date=date)
 
 
 @dataclass

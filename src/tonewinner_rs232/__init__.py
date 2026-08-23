@@ -17,10 +17,11 @@ from .protocol import (
     parse_mute_status,
     parse_power_status,
     parse_sound_mode,
+    parse_version_info,
     parse_volume_status,
 )
 from .receiver import TonewinnerReceiver
-from .state import ReceiverState
+from .state import ReceiverInfo, ReceiverState
 
 __all__ = [
     "DEFAULT_BAUDRATE",
@@ -28,6 +29,7 @@ __all__ = [
     "INPUT_SOURCE_NAMES",
     "SOUND_MODE_LABELS",
     "InputSource",
+    "ReceiverInfo",
     "ReceiverState",
     "SoundMode",
     "TonewinnerReceiver",
@@ -39,5 +41,6 @@ __all__ = [
     "parse_mute_status",
     "parse_power_status",
     "parse_sound_mode",
+    "parse_version_info",
     "parse_volume_status",
 ]
