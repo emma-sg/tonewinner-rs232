@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from tonewinner_rs232 import (
     SOURCE_QUERY_ATTEMPTS,
     ReceiverInfo,
     TonewinnerReceiver,
+    build_command,
     parse_input_source,
     parse_mute_status,
     parse_power_status,
@@ -17,6 +19,7 @@ from tonewinner_rs232 import (
     parse_version_info,
     parse_volume_status,
 )
+from tonewinner_rs232.protocol import CMD_POWER_QUERY
 
 
 class TestProtocolParsing:
@@ -380,10 +383,11 @@ class TestReceiver:
         self, receiver: TonewinnerReceiver, mock_serial
     ) -> None:
         """A standby device answering only POWER still yields a snapshot."""
-        with (
-            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
-            patch("tonewinner_rs232.receiver.SOURCE_QUERY_RETRY_DELAY", 0.0),
-        ):
+        # The response is injected before query_state() on purpose: feed_data
+        # is only consumed once the read loop runs, which happens after the
+        # pending POWER query is registered. QUERY_TIMEOUT is shortened only
+        # so a regression in the standby skip logic fails fast.
+        with patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01):
             mock_serial.inject_response("POWER OFF")
             state = await receiver.query_state()
 
@@ -404,8 +408,41 @@ class TestReceiver:
         assert state.source == "HD1"
         assert state.sound_mode == "STEREO"
         written = mock_serial.get_written()
-        for frame in (b"##VOL ?*", b"##MUTE ?", b"##SI ?*", b"##MODE ?*"):
+        for frame in (b"##VOL ?*", b"##MUTE ?*", b"##SI ?*", b"##MODE ?*"):
             assert any(w.startswith(frame) for w in written)
+
+    async def test_query_state_warns_when_queries_ignored(
+        self, receiver: TonewinnerReceiver, mock_serial, caplog
+    ) -> None:
+        """A powered-on device ignoring queries logs one stale-state warning."""
+        mock_serial.autorespond = True
+        # Instance-level override: answer POWER but nothing else.
+        mock_serial.QUERY_RESPONSES = {build_command(CMD_POWER_QUERY): "POWER ON"}
+        with (
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+            patch("tonewinner_rs232.receiver.SOURCE_QUERY_RETRY_DELAY", 0.0),
+            caplog.at_level(logging.WARNING, logger="tonewinner_rs232.receiver"),
+        ):
+            state = await receiver.query_state()
+            await asyncio.sleep(0.1)  # let the background source re-query finish
+
+        assert state.power is True
+        assert state.volume is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "state may be stale" in message
+        assert "VOL" in message and "MODE" in message
+
+    async def test_query_state_no_warning_in_standby(
+        self, receiver: TonewinnerReceiver, mock_serial, caplog
+    ) -> None:
+        """The standby path skips queries, so no stale-state warning fires."""
+        with caplog.at_level(logging.WARNING, logger="tonewinner_rs232.receiver"):
+            mock_serial.inject_response("POWER OFF")
+            await receiver.query_state()
+
+        assert not caplog.records
 
     async def test_query_state_raises_when_nothing_answers(
         self, receiver: TonewinnerReceiver, mock_serial

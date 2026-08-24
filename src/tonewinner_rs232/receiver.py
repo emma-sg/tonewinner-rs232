@@ -154,28 +154,42 @@ class TonewinnerReceiver:
         """Query all device state and return the updated snapshot.
 
         A device in standby answers the power query but ignores the rest,
-        so ignored queries are skipped and whatever answered is returned.
-        Raises ConnectionError only when nothing responds at all.
+        so those queries are skipped once standby is known; when the device
+        reports power, ignored queries are tolerated instead of raised.
+        Raises ConnectionError only when even the power query goes
+        unanswered. Worst case, a device claiming power but ignoring
+        everything else stalls this call for 4 x QUERY_TIMEOUT seconds.
         """
         self._batching = True
         self._batch_changed = False
         try:
-            await self._query(CMD_POWER_QUERY, "POWER")
+            power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
 
             # A standby receiver answers power but ignores everything else,
             # so skip queries that would just wait on guaranteed timeouts.
-            if self._state.power:
+            # An unparseable power response (None) is treated as "maybe on";
+            # attempting the queries is safe since failures are tolerated.
+            if power is not False:
+                ignored: list[str] = []
                 for command, prefix in (
                     (CMD_VOLUME_QUERY, "VOL"),
                     (CMD_MUTE_QUERY, "MUTE"),
                     (CMD_INPUT_QUERY, "SI"),
                     (CMD_MODE_QUERY, "MODE"),
                 ):
+                    # Pace commands; the device drops back-to-back frames.
+                    await asyncio.sleep(0.1)
                     try:
                         await self._query(command, prefix)
                     except ConnectionError as err:
                         _LOGGER.debug("%s query ignored: %s", prefix, err)
-                    await asyncio.sleep(0.1)
+                        ignored.append(prefix)
+                if ignored:
+                    _LOGGER.warning(
+                        "Receiver ignored %s queries; state may be stale "
+                        "until the next successful poll",
+                        ", ".join(ignored),
+                    )
         finally:
             self._batching = False
             if self._batch_changed:

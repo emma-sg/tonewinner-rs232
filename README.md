@@ -20,6 +20,7 @@ Requires Python 3.12+.
 import asyncio
 from tonewinner_rs232 import TonewinnerReceiver
 
+
 async def main():
     receiver = TonewinnerReceiver("/dev/ttyUSB0")
 
@@ -35,6 +36,7 @@ async def main():
 
     await receiver.power_off()
     await receiver.disconnect()
+
 
 asyncio.run(main())
 ```

@@ -6,10 +6,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tonewinner_rs232 import TonewinnerReceiver
+from tonewinner_rs232.protocol import (
+    CMD_INPUT_QUERY,
+    CMD_MODE_QUERY,
+    CMD_MUTE_QUERY,
+    CMD_POWER_QUERY,
+    CMD_VOLUME_QUERY,
+    build_command,
+)
 
 
 class MockSerialConnection:
     """Simulates a serialx open_serial_connection with a reader/writer pair."""
+
+    QUERY_RESPONSES = {
+        build_command(CMD_POWER_QUERY): "POWER ON",
+        build_command(CMD_VOLUME_QUERY): "VOL 50",
+        build_command(CMD_MUTE_QUERY): "MUTE OFF",
+        build_command(CMD_INPUT_QUERY): "SI HD1",
+        build_command(CMD_MODE_QUERY): "MODE STEREO",
+    }
 
     def __init__(self) -> None:
         """Initialize the mock serial connection."""
@@ -23,17 +39,8 @@ class MockSerialConnection:
 
     def _on_write(self, data: bytes) -> None:
         """Feed the canned response for a query when autorespond is enabled."""
-        if not self.autorespond:
-            return
-        responses = {
-            b"##POWER ?*": "POWER ON",
-            b"##VOL ?*": "VOL 50",
-            b"##MUTE ?*": "MUTE OFF",
-            b"##SI ?*": "SI HD1",
-            b"##MODE ?*": "MODE STEREO",
-        }
-        if data in responses:
-            self.inject_response(responses[data])
+        if self.autorespond and data in self.QUERY_RESPONSES:
+            self.inject_response(self.QUERY_RESPONSES[data])
 
     @property
     def reader(self) -> asyncio.StreamReader:
