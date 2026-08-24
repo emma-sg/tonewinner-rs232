@@ -177,7 +177,7 @@ class TonewinnerReceiver:
                     (CMD_INPUT_QUERY, "SI"),
                     (CMD_MODE_QUERY, "MODE"),
                 ):
-                    # Pace commands; the device drops back-to-back frames.
+                    # Pace commands; the device may drop back-to-back frames.
                     await asyncio.sleep(0.1)
                     try:
                         await self._query(command, prefix)
@@ -230,6 +230,25 @@ class TonewinnerReceiver:
         """Query and return the current power state."""
         response = await self._query(CMD_POWER_QUERY, "POWER")
         return parse_power_status(response)
+
+    async def probe(self) -> ReceiverInfo | None:
+        """Probe whether a receiver answers and return its identity, if reported.
+
+        A receiver in standby ignores the identity query but still answers
+        power polls, so an answered power poll verifies the link; None is
+        returned when no model can be read (e.g. standby). Raises
+        ConnectionError when even the power poll goes unanswered.
+        """
+        power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
+        if power is None:
+            msg = "Unparseable POWER response"
+            raise ConnectionError(msg)
+        info: ReceiverInfo | None = None
+        if power:
+            # Pace commands; the device may drop back-to-back frames.
+            await asyncio.sleep(0.1)
+            info = await self.query_info()
+        return info
 
     # ------------------------------------------------------------------
     # Volume
