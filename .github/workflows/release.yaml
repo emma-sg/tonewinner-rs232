@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Open version-bump PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Run tests
+        run: uv run --all-extras pytest
+
+      - name: Bump version
+        id: version
+        run: |
+          uv version --bump ${{ inputs.bump }}
+          uv lock
+          echo "new_version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+
+      - name: Push bump branch and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.version.outputs.new_version }}"
+          BRANCH="release/v$V"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add pyproject.toml uv.lock
+          git commit -m "Bump version to $V"
+          git push -u origin "$BRANCH"
+          gh pr create --title "Bump version to $V" --body "Automated version bump to $V. Merging this PR creates the \`v$V\` draft release."
+          gh pr merge --auto --squash "$BRANCH" || echo "::warning::Could not enable auto-merge (needs 'Allow auto-merge' in repo settings) — merge the PR manually."
