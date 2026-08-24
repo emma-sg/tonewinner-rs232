@@ -44,6 +44,9 @@ from .state import ReceiverInfo, ReceiverState
 
 _LOGGER = logging.getLogger(__name__)
 
+QUERY_TIMEOUT = 3.0
+"""Seconds to wait for a query response before treating it as ignored."""
+
 type StateCallback = Callable[[ReceiverState | None], None]
 """Callback signature for state change subscriptions.
 
@@ -148,19 +151,45 @@ class TonewinnerReceiver:
     # ------------------------------------------------------------------
 
     async def query_state(self) -> ReceiverState:
-        """Query all device state and return the updated snapshot."""
+        """Query all device state and return the updated snapshot.
+
+        A device in standby answers the power query but ignores the rest,
+        so those queries are skipped once standby is known; when the device
+        reports power, ignored queries are tolerated instead of raised.
+        Raises ConnectionError only when even the power query goes
+        unanswered. Worst case, a device claiming power but ignoring
+        everything else stalls this call for 4 x QUERY_TIMEOUT seconds.
+        """
         self._batching = True
         self._batch_changed = False
         try:
-            await self._query(CMD_POWER_QUERY, "POWER")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_VOLUME_QUERY, "VOL")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_MUTE_QUERY, "MUTE")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_INPUT_QUERY, "SI")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_MODE_QUERY, "MODE")
+            power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
+
+            # A standby receiver answers power but ignores everything else,
+            # so skip queries that would just wait on guaranteed timeouts.
+            # An unparseable power response (None) is treated as "maybe on";
+            # attempting the queries is safe since failures are tolerated.
+            if power is not False:
+                ignored: list[str] = []
+                for command, prefix in (
+                    (CMD_VOLUME_QUERY, "VOL"),
+                    (CMD_MUTE_QUERY, "MUTE"),
+                    (CMD_INPUT_QUERY, "SI"),
+                    (CMD_MODE_QUERY, "MODE"),
+                ):
+                    # Pace commands; the device drops back-to-back frames.
+                    await asyncio.sleep(0.1)
+                    try:
+                        await self._query(command, prefix)
+                    except ConnectionError as err:
+                        _LOGGER.debug("%s query ignored: %s", prefix, err)
+                        ignored.append(prefix)
+                if ignored:
+                    _LOGGER.warning(
+                        "Receiver ignored %s queries; state may be stale "
+                        "until the next successful poll",
+                        ", ".join(ignored),
+                    )
         finally:
             self._batching = False
             if self._batch_changed:
@@ -313,7 +342,7 @@ class TonewinnerReceiver:
         self._pending_queries.append(pending)
         await self._send_command(command)
         try:
-            return await asyncio.wait_for(future, timeout=3.0)
+            return await asyncio.wait_for(future, timeout=QUERY_TIMEOUT)
         except TimeoutError:
             msg = f"No response for {prefix} query within timeout"
             raise ConnectionError(
