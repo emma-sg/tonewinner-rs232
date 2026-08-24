@@ -19,7 +19,7 @@ from tonewinner_rs232 import (
     parse_version_info,
     parse_volume_status,
 )
-from tonewinner_rs232.protocol import CMD_POWER_QUERY
+from tonewinner_rs232.protocol import CMD_INFO_QUERY, CMD_POWER_QUERY
 
 
 class TestProtocolParsing:
@@ -560,6 +560,76 @@ class TestReceiver:
         assert info.model == "AT-500"
         assert info.firmware == "V1.02.1777"
         assert info.date == datetime.datetime(2026, 7, 1)
+
+    async def test_probe_awake_reports_identity(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """An awake receiver answers power and is paced into reporting its model."""
+        mock_serial.autorespond = True
+        mock_serial.QUERY_RESPONSES[build_command(CMD_INFO_QUERY)] = (
+            "VER :AT-500,V1.02.1777,Jul  1 2026"
+        )
+        write_times: list[float] = []
+        respond = mock_serial.writer.write.side_effect
+
+        def timed_write(data: bytes) -> None:
+            write_times.append(asyncio.get_running_loop().time())
+            respond(data)
+
+        mock_serial.writer.write.side_effect = timed_write
+
+        info = await receiver.probe()
+
+        assert info is not None
+        assert info.model == "AT-500"
+        # The identity query must be paced after the power answer.
+        frames = mock_serial.get_written()
+        power_at = write_times[frames.index(b"##POWER ?*")]
+        ver_at = write_times[frames.index(b"##VER*")]
+        assert ver_at - power_at >= 0.1
+
+    async def test_probe_standby_skips_identity_query(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A standby receiver is verified by its power answer alone."""
+        mock_serial.inject_response("POWER OFF")
+
+        info = await receiver.probe()
+
+        assert info is None
+        written = mock_serial.get_written()
+        assert any(w.startswith(b"##POWER ?*") for w in written)
+        assert not any(w.startswith(b"##VER*") for w in written)
+
+    async def test_probe_raises_when_power_poll_unanswered(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """No answer to the power poll means the connection is unusable."""
+        with (
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+            pytest.raises(ConnectionError),
+        ):
+            await receiver.probe()
+
+    async def test_probe_rejects_unparseable_power_response(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A garbled power answer is treated as an unusable connection."""
+        probe_task = asyncio.create_task(receiver.probe())
+        await asyncio.sleep(0)
+        # A bare "POWER" frame passes prefix matching but parses to None.
+        mock_serial.inject_response("POWER")
+
+        with pytest.raises(ConnectionError, match="Unparseable POWER response"):
+            await probe_task
 
     async def test_query_timeout_cleans_up_pending(
         self,
