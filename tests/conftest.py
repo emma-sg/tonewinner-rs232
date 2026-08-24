@@ -14,11 +14,26 @@ class MockSerialConnection:
     def __init__(self) -> None:
         """Initialize the mock serial connection."""
         self._reader: asyncio.StreamReader | None = None
+        self.autorespond = False
         self.writer = MagicMock()
-        self.writer.write = MagicMock()
+        self.writer.write = MagicMock(side_effect=self._on_write)
         self.writer.drain = AsyncMock()
         self.writer.close = MagicMock()
         self.writer.wait_closed = AsyncMock()
+
+    def _on_write(self, data: bytes) -> None:
+        """Feed the canned response for a query when autorespond is enabled."""
+        if not self.autorespond:
+            return
+        responses = {
+            b"##POWER ?*": "POWER ON",
+            b"##VOL ?*": "VOL 50",
+            b"##MUTE ?*": "MUTE OFF",
+            b"##SI ?*": "SI HD1",
+            b"##MODE ?*": "MODE STEREO",
+        }
+        if data in responses:
+            self.inject_response(responses[data])
 
     @property
     def reader(self) -> asyncio.StreamReader:

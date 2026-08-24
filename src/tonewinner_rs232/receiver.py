@@ -159,31 +159,28 @@ class TonewinnerReceiver:
         """
         self._batching = True
         self._batch_changed = False
-        answered = 0
         try:
-            for command, prefix in (
-                (CMD_POWER_QUERY, "POWER"),
-                (CMD_VOLUME_QUERY, "VOL"),
-                (CMD_MUTE_QUERY, "MUTE"),
-                (CMD_INPUT_QUERY, "SI"),
-                (CMD_MODE_QUERY, "MODE"),
-            ):
-                try:
-                    await self._query(command, prefix)
-                    answered += 1
-                except ConnectionError as err:
-                    _LOGGER.debug("%s query ignored: %s", prefix, err)
-                await asyncio.sleep(0.1)
+            await self._query(CMD_POWER_QUERY, "POWER")
+
+            # A standby receiver answers power but ignores everything else,
+            # so skip queries that would just wait on guaranteed timeouts.
+            if self._state.power:
+                for command, prefix in (
+                    (CMD_VOLUME_QUERY, "VOL"),
+                    (CMD_MUTE_QUERY, "MUTE"),
+                    (CMD_INPUT_QUERY, "SI"),
+                    (CMD_MODE_QUERY, "MODE"),
+                ):
+                    try:
+                        await self._query(command, prefix)
+                    except ConnectionError as err:
+                        _LOGGER.debug("%s query ignored: %s", prefix, err)
+                    await asyncio.sleep(0.1)
         finally:
             self._batching = False
             if self._batch_changed:
                 self._notify(self._state.copy())
             self._maybe_start_source_query()
-        if not answered:
-            msg = "No response for any state query"
-            raise ConnectionError(
-                msg,
-            )
         return self._state
 
     # ------------------------------------------------------------------

@@ -388,15 +388,24 @@ class TestReceiver:
             state = await receiver.query_state()
 
         assert state.power is False
-        # Every query was written even though only POWER was answered.
-        for frame in (
-            b"##POWER ?*",
-            b"##VOL ?*",
-            b"##MUTE ?",
-            b"##SI ?*",
-            b"##MODE ?*",
-        ):
-            assert any(w.startswith(frame) for w in mock_serial.get_written())
+        # Standby skips queries the device is known to ignore.
+        assert any(w.startswith(b"##POWER ?*") for w in mock_serial.get_written())
+        assert not any(w.startswith(b"##VOL ?*") for w in mock_serial.get_written())
+
+    async def test_query_state_full_when_powered_on(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """A powered-on receiver is queried for the complete state."""
+        mock_serial.autorespond = True
+
+        state = await receiver.query_state()
+
+        assert state.volume == 50
+        assert state.source == "HD1"
+        assert state.sound_mode == "STEREO"
+        written = mock_serial.get_written()
+        for frame in (b"##VOL ?*", b"##MUTE ?", b"##SI ?*", b"##MODE ?*"):
+            assert any(w.startswith(frame) for w in written)
 
     async def test_query_state_raises_when_nothing_answers(
         self, receiver: TonewinnerReceiver, mock_serial
