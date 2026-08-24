@@ -620,7 +620,7 @@ esphome = [
 
 [[package]]
 name = "tonewinner-rs232"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "serialx", extra = ["esphome"] },
