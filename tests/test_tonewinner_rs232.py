@@ -376,6 +376,38 @@ class TestReceiver:
         assert mock_serial.writer.close.called
         assert states and states[-1] is None
 
+    async def test_query_state_partial_in_standby(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """A standby device answering only POWER still yields a snapshot."""
+        with (
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+            patch("tonewinner_rs232.receiver.SOURCE_QUERY_RETRY_DELAY", 0.0),
+        ):
+            mock_serial.inject_response("POWER OFF")
+            state = await receiver.query_state()
+
+        assert state.power is False
+        # Every query was written even though only POWER was answered.
+        for frame in (
+            b"##POWER ?*",
+            b"##VOL ?*",
+            b"##MUTE ?",
+            b"##SI ?*",
+            b"##MODE ?*",
+        ):
+            assert any(w.startswith(frame) for w in mock_serial.get_written())
+
+    async def test_query_state_raises_when_nothing_answers(
+        self, receiver: TonewinnerReceiver, mock_serial
+    ) -> None:
+        """No responses at all means the connection is unusable."""
+        with (
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+            pytest.raises(ConnectionError),
+        ):
+            await receiver.query_state()
+
     async def test_source_requeried_after_power_on_unknown(
         self, receiver: TonewinnerReceiver, mock_serial
     ) -> None:

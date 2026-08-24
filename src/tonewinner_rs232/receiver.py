@@ -44,6 +44,9 @@ from .state import ReceiverInfo, ReceiverState
 
 _LOGGER = logging.getLogger(__name__)
 
+QUERY_TIMEOUT = 3.0
+"""Seconds to wait for a query response before treating it as ignored."""
+
 type StateCallback = Callable[[ReceiverState | None], None]
 """Callback signature for state change subscriptions.
 
@@ -148,24 +151,39 @@ class TonewinnerReceiver:
     # ------------------------------------------------------------------
 
     async def query_state(self) -> ReceiverState:
-        """Query all device state and return the updated snapshot."""
+        """Query all device state and return the updated snapshot.
+
+        A device in standby answers the power query but ignores the rest,
+        so ignored queries are skipped and whatever answered is returned.
+        Raises ConnectionError only when nothing responds at all.
+        """
         self._batching = True
         self._batch_changed = False
+        answered = 0
         try:
-            await self._query(CMD_POWER_QUERY, "POWER")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_VOLUME_QUERY, "VOL")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_MUTE_QUERY, "MUTE")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_INPUT_QUERY, "SI")
-            await asyncio.sleep(0.1)
-            await self._query(CMD_MODE_QUERY, "MODE")
+            for command, prefix in (
+                (CMD_POWER_QUERY, "POWER"),
+                (CMD_VOLUME_QUERY, "VOL"),
+                (CMD_MUTE_QUERY, "MUTE"),
+                (CMD_INPUT_QUERY, "SI"),
+                (CMD_MODE_QUERY, "MODE"),
+            ):
+                try:
+                    await self._query(command, prefix)
+                    answered += 1
+                except ConnectionError as err:
+                    _LOGGER.debug("%s query ignored: %s", prefix, err)
+                await asyncio.sleep(0.1)
         finally:
             self._batching = False
             if self._batch_changed:
                 self._notify(self._state.copy())
             self._maybe_start_source_query()
+        if not answered:
+            msg = "No response for any state query"
+            raise ConnectionError(
+                msg,
+            )
         return self._state
 
     # ------------------------------------------------------------------
@@ -313,7 +331,7 @@ class TonewinnerReceiver:
         self._pending_queries.append(pending)
         await self._send_command(command)
         try:
-            return await asyncio.wait_for(future, timeout=3.0)
+            return await asyncio.wait_for(future, timeout=QUERY_TIMEOUT)
         except TimeoutError:
             msg = f"No response for {prefix} query within timeout"
             raise ConnectionError(
