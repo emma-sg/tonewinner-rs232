@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import serialx
 
 from .const import (
     DEFAULT_BAUDRATE,
     DEFAULT_READ_TIMEOUT,
+    PROBE_WAKE_ATTEMPTS,
+    PROBE_WAKE_DELAY,
     SOURCE_QUERY_ATTEMPTS,
     SOURCE_QUERY_RETRY_DELAY,
 )
@@ -75,8 +77,10 @@ class TonewinnerReceiver:
         self._read_task: asyncio.Task[None] | None = None
         self._source_query_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
+        self._probe_lock = asyncio.Lock()
         self._batching = False
         self._batch_changed = False
+        self._source_query_suppressions = 0
 
     # ------------------------------------------------------------------
     # Public properties
@@ -234,21 +238,82 @@ class TonewinnerReceiver:
     async def probe(self) -> ReceiverInfo | None:
         """Probe whether a receiver answers and return its identity, if reported.
 
-        A receiver in standby ignores the identity query but still answers
-        power polls, so an answered power poll verifies the link; None is
-        returned when no model can be read (e.g. standby). Raises
-        ConnectionError when even the power poll goes unanswered.
+        A receiver in standby ignores the identity query but answers power
+        polls, so the power poll verifies the link; a standby receiver is
+        then woken to read its identity and returned to standby afterwards,
+        leaving the receiver as it was found. Raises ConnectionError when
+        the power poll goes unanswered.
         """
+        # Two probes would otherwise drive power on one device at the same
+        # time, so one could read identity while the other powered it down.
+        async with self._probe_lock:
+            return await self._probe()
+
+    async def _probe(self) -> ReceiverInfo | None:
+        """Run a probe; callers must hold `_probe_lock`."""
         power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
         if power is None:
             msg = "Unparseable POWER response"
             raise ConnectionError(msg)
-        info: ReceiverInfo | None = None
         if power:
             # Pace commands; the device may drop back-to-back frames.
             await asyncio.sleep(0.1)
-            info = await self.query_info()
-        return info
+            return await self.query_info()
+        return await self._wake_and_read_info()
+
+    @contextlib.asynccontextmanager
+    async def _suppress_source_query(self) -> AsyncIterator[None]:
+        """Suppress the background source re-query for the duration of a wake.
+
+        Counted rather than boolean so nested or overlapping wakes each hold
+        their own suppression instead of clearing it for one another.
+        """
+        self._source_query_suppressions += 1
+        try:
+            yield
+        finally:
+            self._source_query_suppressions -= 1
+
+    async def _wake_and_read_info(self) -> ReceiverInfo | None:
+        """Wake a standby receiver to read its identity, then return it to standby."""
+        # The wake exists only to read identity, so suppress the background
+        # source re-query that the POWER ON response would otherwise start: it
+        # would outlive the probe and query a receiver that is about to be
+        # powered off anyway.
+        async with self._suppress_source_query():
+            info: ReceiverInfo | None = None
+            try:
+                await self.power_on()
+                for attempt in range(1, PROBE_WAKE_ATTEMPTS + 1):
+                    await asyncio.sleep(PROBE_WAKE_DELAY)
+                    try:
+                        info = await self.query_info()
+                    except ConnectionError as err:
+                        if not self.connected:
+                            _LOGGER.debug(
+                                "Connection lost while waking receiver: %s", err
+                            )
+                            break
+                        _LOGGER.debug(
+                            "Identity query %d/%d ignored while receiver boots: %s",
+                            attempt,
+                            PROBE_WAKE_ATTEMPTS,
+                            err,
+                        )
+                    else:
+                        break
+            finally:
+                try:
+                    if self.connected:
+                        await self.power_off()
+                # Both a serial failure and a lost connection mean the receiver
+                # could not be returned to standby; ConnectionError is listed
+                # separately only to make that intent explicit.
+                except (ConnectionError, OSError) as err:
+                    _LOGGER.warning("Failed to return receiver to standby: %s", err)
+            if info is None:
+                _LOGGER.debug("Receiver did not report its identity while awake")
+            return info
 
     # ------------------------------------------------------------------
     # Volume
@@ -453,6 +518,7 @@ class TonewinnerReceiver:
             self._state.power
             and self._state.source is None
             and self._source_query_task is None
+            and self._source_query_suppressions == 0
         ):
             self._source_query_task = asyncio.create_task(
                 self._query_source_until_known()

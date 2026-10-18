@@ -95,3 +95,8 @@ DEFAULT_READ_TIMEOUT = 1.0
 # unknown input, re-query the source this many times at this interval.
 SOURCE_QUERY_ATTEMPTS = 5
 SOURCE_QUERY_RETRY_DELAY = 3.0
+
+# The receiver ignores identity queries while it boots after a wake from
+# standby, so probe() retries the read this many times at this interval.
+PROBE_WAKE_ATTEMPTS = 10
+PROBE_WAKE_DELAY = 1.0

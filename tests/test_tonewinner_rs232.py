@@ -1,13 +1,14 @@
 """Tests for tonewinner-rs232."""
 
 import asyncio
-import datetime
+import datetime as dt
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tonewinner_rs232 import (
+    PROBE_WAKE_ATTEMPTS,
     SOURCE_QUERY_ATTEMPTS,
     ReceiverInfo,
     TonewinnerReceiver,
@@ -19,7 +20,12 @@ from tonewinner_rs232 import (
     parse_version_info,
     parse_volume_status,
 )
-from tonewinner_rs232.protocol import CMD_INFO_QUERY, CMD_POWER_QUERY
+from tonewinner_rs232.protocol import (
+    CMD_INFO_QUERY,
+    CMD_POWER_OFF,
+    CMD_POWER_ON,
+    CMD_POWER_QUERY,
+)
 
 
 class TestProtocolParsing:
@@ -102,7 +108,7 @@ class TestProtocolParsing:
         assert info == ReceiverInfo(
             model="AT-500",
             firmware="V1.02.1777",
-            date=datetime.datetime(2026, 7, 1),
+            date=dt.datetime(2026, 7, 1),
         )
 
     def test_parse_version_info_no_colon_space(self) -> None:
@@ -559,7 +565,7 @@ class TestReceiver:
         assert info is not None
         assert info.model == "AT-500"
         assert info.firmware == "V1.02.1777"
-        assert info.date == datetime.datetime(2026, 7, 1)
+        assert info.date == dt.datetime(2026, 7, 1)
 
     async def test_probe_awake_reports_identity(
         self,
@@ -590,20 +596,232 @@ class TestReceiver:
         ver_at = write_times[frames.index(b"##VER*")]
         assert ver_at - power_at >= 0.1
 
-    async def test_probe_standby_skips_identity_query(
+    async def test_probe_standby_wakes_to_read_identity(
         self,
         receiver: TonewinnerReceiver,
         mock_serial,
     ) -> None:
-        """A standby receiver is verified by its power answer alone."""
+        """A standby receiver is woken to report its model, then powered off."""
+        # Model a receiver that only answers VER once it has been woken, so
+        # the identity read can only succeed if probe() actually powered on.
+        awake = False
+        frames: list[bytes] = []
+
+        def respond(data: bytes) -> None:
+            nonlocal awake
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                awake = True
+            elif data == build_command(CMD_INFO_QUERY) and awake:
+                mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            info = await receiver.probe()
+
+        assert info is not None
+        assert info.model == "AT-500"
+        # Woken once, read once, restored once: the receiver is left exactly
+        # as it was found, without a second wake or a redundant power-off.
+        assert frames == [
+            build_command(CMD_POWER_QUERY),
+            build_command(CMD_POWER_ON),
+            build_command(CMD_INFO_QUERY),
+            build_command(CMD_POWER_OFF),
+        ]
+
+    async def test_wake_does_not_start_source_query(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Waking for a probe must not start the background source re-query."""
+        frames: list[bytes] = []
+
+        def respond(data: bytes) -> None:
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                # A booting receiver reports power with no source known yet,
+                # which is the condition that starts the source re-query.
+                mock_serial.inject_response("POWER ON")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            await receiver.probe()
+            # Let any background task it started reach its first query.
+            await asyncio.sleep(0)
+
+        assert not any(frame.startswith(b"##SI") for frame in frames)
+        assert receiver._source_query_task is None  # noqa: SLF001
+        # The suppression must not leak past the wake.
+        assert receiver._source_query_suppressions == 0  # noqa: SLF001
+
+    async def test_concurrent_probes_do_not_interleave_power(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Overlapping probes serialize so neither powers down mid-read."""
+        frames: list[bytes] = []
+
+        def respond(data: bytes) -> None:
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                mock_serial.inject_response("POWER ON")
+            elif data == build_command(CMD_INFO_QUERY):
+                mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.5),
+        ):
+            first, second = await asyncio.gather(receiver.probe(), receiver.probe())
+
+        assert first is not None
+        assert second is not None
+        # Each wake runs whole. Interleaved power frames would mean one probe
+        # powered the receiver off while the other was still reading it.
+        wake = [
+            build_command(CMD_POWER_QUERY),
+            build_command(CMD_POWER_ON),
+            build_command(CMD_INFO_QUERY),
+            build_command(CMD_POWER_OFF),
+        ]
+        assert frames == wake * 2
+
+    async def test_nested_suppression_is_counted(
+        self,
+        receiver: TonewinnerReceiver,
+    ) -> None:
+        """Suppression nests, so an inner wake cannot lift an outer one."""
+        async with receiver._suppress_source_query():  # noqa: SLF001
+            async with receiver._suppress_source_query():  # noqa: SLF001
+                assert receiver._source_query_suppressions == 2  # noqa: SLF001
+            # Leaving the inner context must not re-enable the re-query.
+            assert receiver._source_query_suppressions == 1  # noqa: SLF001
+        assert receiver._source_query_suppressions == 0  # noqa: SLF001
+
+    async def test_probe_standby_bails_when_connection_drops(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A link lost during the wake is not retried against a dead port."""
+        calls = 0
+        real_query_info = receiver.query_info
+
+        async def counting_query_info() -> ReceiverInfo | None:
+            nonlocal calls
+            calls += 1
+            # The link drops after the wake commands were accepted, so the
+            # identity read fails like a lost port rather than a busy device.
+            receiver._writer = None  # noqa: SLF001
+            return await real_query_info()
+
+        receiver.query_info = counting_query_info
         mock_serial.inject_response("POWER OFF")
 
-        info = await receiver.probe()
+        with patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01):
+            info = await receiver.probe()
+
+        assert info is None
+        # One attempt, not PROBE_WAKE_ATTEMPTS: the lost link ends the loop.
+        assert calls == 1
+        assert not any(w.startswith(b"##POWER OFF") for w in mock_serial.get_written())
+
+    async def test_probe_standby_restores_standby_when_identity_unreadable(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A woken receiver that never reports its model is still powered off."""
+        mock_serial.inject_response("POWER OFF")
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            info = await receiver.probe()
 
         assert info is None
         written = mock_serial.get_written()
-        assert any(w.startswith(b"##POWER ?*") for w in written)
-        assert not any(w.startswith(b"##VER*") for w in written)
+        ver_attempts = [w for w in written if w.startswith(b"##VER*")]
+        assert len(ver_attempts) == PROBE_WAKE_ATTEMPTS
+        assert written[-1] == b"##POWER OFF*"
+
+    async def test_probe_keeps_identity_when_standby_restore_fails(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A receiver that cannot be restored still reports its identity."""
+        awake = False
+
+        def respond(data: bytes) -> None:
+            nonlocal awake
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                awake = True
+            elif data == build_command(CMD_INFO_QUERY) and awake:
+                mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+            elif data == build_command(CMD_POWER_OFF):
+                # The port fails while returning the receiver to standby.
+                raise OSError("serial port gone")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            # The identity was already read, so a failed restore must not
+            # turn a successful probe into an error.
+            info = await receiver.probe()
+
+        assert info is not None
+        assert info.model == "AT-500"
+
+    async def test_probe_awake_ignoring_identity_propagates(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """An awake receiver that ignores the identity query fails the probe."""
+        mock_serial.inject_response("POWER ON")
+
+        with (
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+            pytest.raises(ConnectionError),
+        ):
+            await receiver.probe()
+
+        # An awake receiver is never woken or powered off.
+        written = mock_serial.get_written()
+        assert not any(w.startswith(b"##POWER ON*") for w in written)
+        assert not any(w.startswith(b"##POWER OFF*") for w in written)
 
     async def test_probe_raises_when_power_poll_unanswered(
         self,

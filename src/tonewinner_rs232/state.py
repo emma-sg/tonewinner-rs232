@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 from dataclasses import dataclass, replace
 
 
@@ -15,7 +15,7 @@ class ReceiverInfo:
 
     model: str | None = None
     firmware: str | None = None
-    date: datetime.datetime | None = None
+    date: dt.datetime | None = None
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -182,10 +182,10 @@ def parse_version_info(message: str) -> ReceiverInfo | None:
     model = fields[0] or None
     firmware = fields[1] if len(fields) > 1 else None
 
-    date: datetime.datetime | None = None
+    date: dt.datetime | None = None
     if len(fields) > 2 and (raw_date := fields[2]):
         try:
-            date = datetime.datetime.strptime(raw_date, "%b %d %Y")
+            date = dt.datetime.strptime(raw_date, "%b %d %Y")
         except ValueError:
             date = None
 
