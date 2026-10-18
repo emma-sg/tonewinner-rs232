@@ -672,6 +672,45 @@ class TestReceiver:
         # The suppression must not leak past the wake.
         assert receiver._source_query_suppressions == 0  # noqa: SLF001
 
+    async def test_concurrent_probes_do_not_interleave_power(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Overlapping probes serialize so neither powers down mid-read."""
+        frames: list[bytes] = []
+
+        def respond(data: bytes) -> None:
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                mock_serial.inject_response("POWER ON")
+            elif data == build_command(CMD_INFO_QUERY):
+                mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.5),
+        ):
+            first, second = await asyncio.gather(receiver.probe(), receiver.probe())
+
+        assert first is not None
+        assert second is not None
+        # Each wake runs whole. Interleaved power frames would mean one probe
+        # powered the receiver off while the other was still reading it.
+        wake = [
+            build_command(CMD_POWER_QUERY),
+            build_command(CMD_POWER_ON),
+            build_command(CMD_INFO_QUERY),
+            build_command(CMD_POWER_OFF),
+        ]
+        assert frames == wake * 2
+
     async def test_nested_suppression_is_counted(
         self,
         receiver: TonewinnerReceiver,

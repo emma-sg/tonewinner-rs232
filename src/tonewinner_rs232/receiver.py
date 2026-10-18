@@ -77,6 +77,7 @@ class TonewinnerReceiver:
         self._read_task: asyncio.Task[None] | None = None
         self._source_query_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
+        self._probe_lock = asyncio.Lock()
         self._batching = False
         self._batch_changed = False
         self._source_query_suppressions = 0
@@ -243,6 +244,13 @@ class TonewinnerReceiver:
         leaving the receiver as it was found. Raises ConnectionError when
         the power poll goes unanswered.
         """
+        # Two probes would otherwise drive power on one device at the same
+        # time, so one could read identity while the other powered it down.
+        async with self._probe_lock:
+            return await self._probe()
+
+    async def _probe(self) -> ReceiverInfo | None:
+        """Run a probe; callers must hold `_probe_lock`."""
         power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
         if power is None:
             msg = "Unparseable POWER response"
