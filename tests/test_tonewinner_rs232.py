@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tonewinner_rs232 import (
+    PROBE_WAKE_ATTEMPTS,
     SOURCE_QUERY_ATTEMPTS,
     ReceiverInfo,
     TonewinnerReceiver,
@@ -590,20 +591,49 @@ class TestReceiver:
         ver_at = write_times[frames.index(b"##VER*")]
         assert ver_at - power_at >= 0.1
 
-    async def test_probe_standby_skips_identity_query(
+    async def test_probe_standby_wakes_to_read_identity(
         self,
         receiver: TonewinnerReceiver,
         mock_serial,
     ) -> None:
-        """A standby receiver is verified by its power answer alone."""
+        """A standby receiver is woken to report its model, then powered off."""
+        # Standby answers the poll; the identity query only answers once awake.
+        mock_serial.QUERY_RESPONSES[build_command(CMD_POWER_QUERY)] = "POWER OFF"
+        mock_serial.QUERY_RESPONSES[build_command(CMD_INFO_QUERY)] = (
+            "VER :AT-500,V1.02.1777,Jul  1 2026"
+        )
+        mock_serial.autorespond = True
+
+        with patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01):
+            info = await receiver.probe()
+
+        assert info is not None
+        assert info.model == "AT-500"
+        written = mock_serial.get_written()
+        assert any(w.startswith(b"##POWER ?*") for w in written)
+        assert any(w.startswith(b"##VER*") for w in written)
+        # The receiver must be left as it was found.
+        assert written[-1] == b"##POWER OFF*"
+
+    async def test_probe_standby_restores_standby_when_identity_unreadable(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """A woken receiver that never reports its model is still powered off."""
         mock_serial.inject_response("POWER OFF")
 
-        info = await receiver.probe()
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            info = await receiver.probe()
 
         assert info is None
         written = mock_serial.get_written()
-        assert any(w.startswith(b"##POWER ?*") for w in written)
-        assert not any(w.startswith(b"##VER*") for w in written)
+        ver_attempts = [w for w in written if w.startswith(b"##VER*")]
+        assert len(ver_attempts) == PROBE_WAKE_ATTEMPTS
+        assert written[-1] == b"##POWER OFF*"
 
     async def test_probe_raises_when_power_poll_unanswered(
         self,

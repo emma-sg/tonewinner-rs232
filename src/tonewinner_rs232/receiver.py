@@ -12,6 +12,8 @@ import serialx
 from .const import (
     DEFAULT_BAUDRATE,
     DEFAULT_READ_TIMEOUT,
+    PROBE_WAKE_ATTEMPTS,
+    PROBE_WAKE_DELAY,
     SOURCE_QUERY_ATTEMPTS,
     SOURCE_QUERY_RETRY_DELAY,
 )
@@ -234,21 +236,44 @@ class TonewinnerReceiver:
     async def probe(self) -> ReceiverInfo | None:
         """Probe whether a receiver answers and return its identity, if reported.
 
-        A receiver in standby ignores the identity query but still answers
-        power polls, so an answered power poll verifies the link; None is
-        returned when no model can be read (e.g. standby). Raises
-        ConnectionError when even the power poll goes unanswered.
+        A receiver in standby ignores the identity query but answers power
+        polls, so the power poll verifies the link; a standby receiver is
+        then woken to read its identity and returned to standby afterwards,
+        leaving the receiver as it was found. Raises ConnectionError when
+        the power poll goes unanswered.
         """
         power = parse_power_status(await self._query(CMD_POWER_QUERY, "POWER"))
         if power is None:
             msg = "Unparseable POWER response"
             raise ConnectionError(msg)
-        info: ReceiverInfo | None = None
         if power:
             # Pace commands; the device may drop back-to-back frames.
             await asyncio.sleep(0.1)
-            info = await self.query_info()
-        return info
+            return await self.query_info()
+        return await self._wake_and_read_info()
+
+    async def _wake_and_read_info(self) -> ReceiverInfo | None:
+        """Wake a standby receiver to read its identity, then return it to standby."""
+        await self.power_on()
+        try:
+            for attempt in range(1, PROBE_WAKE_ATTEMPTS + 1):
+                await asyncio.sleep(PROBE_WAKE_DELAY)
+                try:
+                    return await self.query_info()
+                except ConnectionError as err:
+                    _LOGGER.debug(
+                        "Identity query %d/%d ignored while receiver boots: %s",
+                        attempt,
+                        PROBE_WAKE_ATTEMPTS,
+                        err,
+                    )
+        finally:
+            try:
+                await self.power_off()
+            except OSError as err:
+                _LOGGER.warning("Failed to return receiver to standby: %s", err)
+        _LOGGER.debug("Receiver did not report its identity while awake")
+        return None
 
     # ------------------------------------------------------------------
     # Volume
