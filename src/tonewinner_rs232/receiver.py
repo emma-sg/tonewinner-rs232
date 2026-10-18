@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import serialx
 
@@ -79,6 +79,7 @@ class TonewinnerReceiver:
         self._write_lock = asyncio.Lock()
         self._batching = False
         self._batch_changed = False
+        self._source_query_suppressions = 0
 
     # ------------------------------------------------------------------
     # Public properties
@@ -252,28 +253,46 @@ class TonewinnerReceiver:
             return await self.query_info()
         return await self._wake_and_read_info()
 
+    @contextlib.asynccontextmanager
+    async def _suppress_source_query(self) -> AsyncIterator[None]:
+        """Suppress the background source re-query for the duration of a wake.
+
+        Counted rather than boolean so nested or overlapping wakes each hold
+        their own suppression instead of clearing it for one another.
+        """
+        self._source_query_suppressions += 1
+        try:
+            yield
+        finally:
+            self._source_query_suppressions -= 1
+
     async def _wake_and_read_info(self) -> ReceiverInfo | None:
         """Wake a standby receiver to read its identity, then return it to standby."""
-        await self.power_on()
-        try:
-            for attempt in range(1, PROBE_WAKE_ATTEMPTS + 1):
-                await asyncio.sleep(PROBE_WAKE_DELAY)
-                try:
-                    return await self.query_info()
-                except ConnectionError as err:
-                    _LOGGER.debug(
-                        "Identity query %d/%d ignored while receiver boots: %s",
-                        attempt,
-                        PROBE_WAKE_ATTEMPTS,
-                        err,
-                    )
-        finally:
+        # The wake exists only to read identity, so suppress the background
+        # source re-query that the POWER ON response would otherwise start: it
+        # would outlive the probe and query a receiver that is about to be
+        # powered off anyway.
+        async with self._suppress_source_query():
+            await self.power_on()
             try:
-                await self.power_off()
-            except OSError as err:
-                _LOGGER.warning("Failed to return receiver to standby: %s", err)
-        _LOGGER.debug("Receiver did not report its identity while awake")
-        return None
+                for attempt in range(1, PROBE_WAKE_ATTEMPTS + 1):
+                    await asyncio.sleep(PROBE_WAKE_DELAY)
+                    try:
+                        return await self.query_info()
+                    except ConnectionError as err:
+                        _LOGGER.debug(
+                            "Identity query %d/%d ignored while receiver boots: %s",
+                            attempt,
+                            PROBE_WAKE_ATTEMPTS,
+                            err,
+                        )
+            finally:
+                try:
+                    await self.power_off()
+                except OSError as err:
+                    _LOGGER.warning("Failed to return receiver to standby: %s", err)
+            _LOGGER.debug("Receiver did not report its identity while awake")
+            return None
 
     # ------------------------------------------------------------------
     # Volume
@@ -478,6 +497,7 @@ class TonewinnerReceiver:
             self._state.power
             and self._state.source is None
             and self._source_query_task is None
+            and self._source_query_suppressions == 0
         ):
             self._source_query_task = asyncio.create_task(
                 self._query_source_until_known()

@@ -638,6 +638,52 @@ class TestReceiver:
             build_command(CMD_POWER_OFF),
         ]
 
+    async def test_wake_does_not_start_source_query(
+        self,
+        receiver: TonewinnerReceiver,
+        mock_serial,
+    ) -> None:
+        """Waking for a probe must not start the background source re-query."""
+        frames: list[bytes] = []
+
+        def respond(data: bytes) -> None:
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                # A booting receiver reports power with no source known yet,
+                # which is the condition that starts the source re-query.
+                mock_serial.inject_response("POWER ON")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
+            await receiver.probe()
+            # Let any background task it started reach its first query.
+            await asyncio.sleep(0)
+
+        assert not any(frame.startswith(b"##SI") for frame in frames)
+        assert receiver._source_query_task is None  # noqa: SLF001
+        # The suppression must not leak past the wake.
+        assert receiver._source_query_suppressions == 0  # noqa: SLF001
+
+    async def test_nested_suppression_is_counted(
+        self,
+        receiver: TonewinnerReceiver,
+    ) -> None:
+        """Suppression nests, so an inner wake cannot lift an outer one."""
+        async with receiver._suppress_source_query():  # noqa: SLF001
+            async with receiver._suppress_source_query():  # noqa: SLF001
+                assert receiver._source_query_suppressions == 2  # noqa: SLF001
+            # Leaving the inner context must not re-enable the re-query.
+            assert receiver._source_query_suppressions == 1  # noqa: SLF001
+        assert receiver._source_query_suppressions == 0  # noqa: SLF001
+
     async def test_probe_standby_restores_standby_when_identity_unreadable(
         self,
         receiver: TonewinnerReceiver,
