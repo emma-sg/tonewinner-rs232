@@ -20,7 +20,12 @@ from tonewinner_rs232 import (
     parse_version_info,
     parse_volume_status,
 )
-from tonewinner_rs232.protocol import CMD_INFO_QUERY, CMD_POWER_QUERY
+from tonewinner_rs232.protocol import (
+    CMD_INFO_QUERY,
+    CMD_POWER_OFF,
+    CMD_POWER_ON,
+    CMD_POWER_QUERY,
+)
 
 
 class TestProtocolParsing:
@@ -597,23 +602,41 @@ class TestReceiver:
         mock_serial,
     ) -> None:
         """A standby receiver is woken to report its model, then powered off."""
-        # Standby answers the poll; the identity query only answers once awake.
-        mock_serial.QUERY_RESPONSES[build_command(CMD_POWER_QUERY)] = "POWER OFF"
-        mock_serial.QUERY_RESPONSES[build_command(CMD_INFO_QUERY)] = (
-            "VER :AT-500,V1.02.1777,Jul  1 2026"
-        )
-        mock_serial.autorespond = True
+        # Model a receiver that only answers VER once it has been woken, so
+        # the identity read can only succeed if probe() actually powered on.
+        awake = False
+        frames: list[bytes] = []
 
-        with patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01):
+        def respond(data: bytes) -> None:
+            nonlocal awake
+            frames.append(data)
+            if data == build_command(CMD_POWER_QUERY):
+                mock_serial.inject_response("POWER OFF")
+            elif data == build_command(CMD_POWER_ON):
+                awake = True
+            elif data == build_command(CMD_INFO_QUERY) and awake:
+                mock_serial.inject_response("VER :AT-500,V1.02.1777,Jul  1 2026")
+            elif data == build_command(CMD_POWER_OFF):
+                mock_serial.inject_response("POWER OFF")
+
+        mock_serial.writer.write.side_effect = respond
+
+        with (
+            patch("tonewinner_rs232.receiver.PROBE_WAKE_DELAY", 0.01),
+            patch("tonewinner_rs232.receiver.QUERY_TIMEOUT", 0.01),
+        ):
             info = await receiver.probe()
 
         assert info is not None
         assert info.model == "AT-500"
-        written = mock_serial.get_written()
-        assert any(w.startswith(b"##POWER ?*") for w in written)
-        assert any(w.startswith(b"##VER*") for w in written)
-        # The receiver must be left as it was found.
-        assert written[-1] == b"##POWER OFF*"
+        # Woken once, read once, restored once: the receiver is left exactly
+        # as it was found, without a second wake or a redundant power-off.
+        assert frames == [
+            build_command(CMD_POWER_QUERY),
+            build_command(CMD_POWER_ON),
+            build_command(CMD_INFO_QUERY),
+            build_command(CMD_POWER_OFF),
+        ]
 
     async def test_probe_standby_restores_standby_when_identity_unreadable(
         self,
