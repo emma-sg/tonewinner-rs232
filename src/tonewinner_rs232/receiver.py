@@ -273,26 +273,39 @@ class TonewinnerReceiver:
         # would outlive the probe and query a receiver that is about to be
         # powered off anyway.
         async with self._suppress_source_query():
-            await self.power_on()
+            info: ReceiverInfo | None = None
             try:
+                await self.power_on()
                 for attempt in range(1, PROBE_WAKE_ATTEMPTS + 1):
                     await asyncio.sleep(PROBE_WAKE_DELAY)
                     try:
-                        return await self.query_info()
+                        info = await self.query_info()
                     except ConnectionError as err:
+                        if not self.connected:
+                            _LOGGER.debug(
+                                "Connection lost while waking receiver: %s", err
+                            )
+                            break
                         _LOGGER.debug(
                             "Identity query %d/%d ignored while receiver boots: %s",
                             attempt,
                             PROBE_WAKE_ATTEMPTS,
                             err,
                         )
+                    else:
+                        break
             finally:
                 try:
-                    await self.power_off()
-                except OSError as err:
+                    if self.connected:
+                        await self.power_off()
+                # Both a serial failure and a lost connection mean the receiver
+                # could not be returned to standby; ConnectionError is listed
+                # separately only to make that intent explicit.
+                except (ConnectionError, OSError) as err:
                     _LOGGER.warning("Failed to return receiver to standby: %s", err)
-            _LOGGER.debug("Receiver did not report its identity while awake")
-            return None
+            if info is None:
+                _LOGGER.debug("Receiver did not report its identity while awake")
+            return info
 
     # ------------------------------------------------------------------
     # Volume
