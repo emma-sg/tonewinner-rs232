@@ -1,7 +1,7 @@
 """Tests for tonewinner-rs232."""
 
 import asyncio
-import datetime
+import datetime as dt
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -103,7 +103,7 @@ class TestProtocolParsing:
         assert info == ReceiverInfo(
             model="AT-500",
             firmware="V1.02.1777",
-            date=datetime.datetime(2026, 7, 1),
+            date=dt.datetime(2026, 7, 1),
         )
 
     def test_parse_version_info_no_colon_space(self) -> None:
@@ -560,7 +560,7 @@ class TestReceiver:
         assert info is not None
         assert info.model == "AT-500"
         assert info.firmware == "V1.02.1777"
-        assert info.date == datetime.datetime(2026, 7, 1)
+        assert info.date == dt.datetime(2026, 7, 1)
 
     async def test_probe_awake_reports_identity(
         self,
